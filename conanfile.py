@@ -1,68 +1,86 @@
+import os, shutil, platform
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
-import shutil
-import os
 
 class GlibConan(ConanFile):
     name = 'glib'
 
-    source_version = '2.51.1'
-    package_version = '3'
-    version = '%s-%s' % (source_version, package_version)
+    version = '2.55.2'
+    sha = '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac'
+    # version = '2.51.1'
+    # sha = '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac'
 
-    requires = 'libffi/3.0.11-2@vuo/stable', \
-               'gettext/0.19.8.1-2@vuo/stable'
+    requires = (
+        'ffi/3.2.1@ntc/stable',
+        'zlib/1.2.11/conan@stable',
+    )
     settings = 'os', 'compiler', 'build_type', 'arch'
     url = 'https://github.com/vuo/conan-glib'
     license = 'https://developer.gnome.org/glib/stable/glib.html'
     description = 'Core application building blocks for GNOME libraries and applications'
-    source_dir = 'glib-%s' % source_version
-    build_dir = '_build'
+    exports = 'config.*.cache'
+    build_requires = 'pkg-config/0.29.2@ntc/stable'
 
     def source(self):
-        # glib is only available as .xz, but Conan's `tools.get` doesn't yet support that archive format.
-        # https://github.com/conan-io/conan/issues/52
-        url = 'https://download.gnome.org/sources/glib/2.51/glib-%s.tar.xz' % self.source_version
+        # url = 'https://download.gnome.org/sources/glib/2.51/glib-%s.tar.xz'%self.source_version
+        url = f'https://github.com/GNOME/glib/archive/{self.version}.tar.gz'
         filename = os.path.basename(url)
         tools.download(url, filename)
-        tools.check_sha256(filename, '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac')
-        self.run('tar xf "%s"' % filename)
+        tools.check_sha256(filename, self.sha)
+        tools.unzip(filename)
+        shutil.move(f'glib-{self.version}', self.name)
         os.unlink(filename)
 
     def imports(self):
-        self.copy('*.dylib', self.build_dir, 'lib')
+        self.copy(pattern='*.dylib', dst=self.name, src='lib')
 
     def build(self):
-        tools.mkdir(self.build_dir)
-        with tools.chdir(self.build_dir):
+        with tools.chdir(self.name):
             autotools = AutoToolsBuildEnvironment(self)
-            autotools.flags.append('-Oz')
-            autotools.flags.append('-mmacosx-version-min=10.10')
+            autotools.flags.append('-O2')
+            if 'Darwin' == platform.system():
+                autotools.flags.append('-mmacosx-version-min=10.10')
             autotools.link_flags.append('-Wl,-rpath,@loader_path')
             autotools.link_flags.append('-Wl,-rpath,@loader_path/../..')
 
-            env_vars = {'PKG_CONFIG_PATH': self.deps_cpp_info["libffi"].rootpath}
+            env_vars = {
+                'PKG_CONFIG_libffi_PREFIX': self.deps_cpp_info['ffi'].rootpath,
+                'PKG_CONFIG_zlib_PREFIX': self.deps_cpp_info['ffi'].rootpath,
+                'PKG_CONFIG_PATH': (';' if 'Windows' == platform.system else ':').join([
+                    os.path.join(self.deps_cpp_info['ffi'].rootpath, 'lib', 'pkgconfig'),
+                    self.deps_cpp_info['zlib'].rootpath,
+                 ])
+            }
+
+            s = 'Environment:\n'
+            for k,v in env_vars.items():
+                s += ' - %s = %s\n'%(k, v)
+            self.output.info(s)
+
+            args = []
+            arch_options_cache_file = os.path.join(self.build_folder, 'config.%s.cache'%os.environ['TARGETMACH'])
+            if 'TARGETMACH' in os.environ and os.path.exists(arch_options_cache_file):
+                args.append('--host=%s'%os.environ['TARGETMACH'])
+                args.append('--cache-file=' + arch_options_cache_file)
+
+            args.append('--quiet')
+            args.append('--without-pcre')
+            args.append('--disable-fam')
+            args.append('--disable-dependency-tracking')
+            args.append('--enable-static')
+            args.append('--enable-included-printf')
+            args.append(f'--prefix={self.package_folder}')
+
+            self.output.info('Configure arguments: %s'%' '.join(args))
+
             with tools.environment_append(env_vars):
-                autotools.configure(configure_dir='../%s' % self.source_dir,
-                                    args=['--quiet',
-                                          '--without-pcre',
-                                          '--disable-fam',
-                                          '--prefix=%s/%s' % (self.build_folder, self.build_dir)])
+                self.run('./autogen.sh %s'%' '.join(args))
+
+                self.output.info('Running configure')
+                autotools.configure(configure_dir=self.name, args=args)
                 autotools.make(args=['install'])
 
-            shutil.move('glib/.libs/libglib-2.0.0.dylib', 'glib/.libs/libglib.dylib')
-            self.run('install_name_tool -id @rpath/libglib.dylib glib/.libs/libglib.dylib')
-            tools.replace_in_file('glib-2.0.pc',
-                                  'prefix=%s/%s' % (self.build_folder, self.build_dir),
-                                  'prefix=%s' % self.package_folder)
-            tools.replace_in_file('glib-2.0.pc',
-                                  '-lglib-2.0',
-                                  '-lglib')
- 
-    def package(self):
-        self.copy('*.h', src='%s/include/glib-2.0' % self.build_dir, dst='include')
-        self.copy('*.h', src='%s/glib' % self.build_dir, dst='include')
-        self.copy('libglib.dylib', src='%s/glib/.libs' % self.build_dir, dst='lib')
-        self.copy('glib-2.0.pc', src=self.build_dir, dst='', keep_path=False)
 
     def package_info(self):
         self.cpp_info.libs = ['glib']
+
+# vim: ts=4 sw=4 expandtab ffs=unix ft=python foldmethod=marker :
