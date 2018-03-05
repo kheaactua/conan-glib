@@ -1,3 +1,4 @@
+from io import StringIO
 import os, shutil, platform
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
 
@@ -5,7 +6,7 @@ class GlibConan(ConanFile):
     name = 'glib'
 
     version = '2.55.2'
-    sha = '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac'
+    sha = 'd06830c28b0d3e8c4f1fbb6d1e359a8c76dafa0f6f2413727846e98a9d0b41aa'
     # version = '2.51.1'
     # sha = '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac'
 
@@ -43,13 +44,25 @@ class GlibConan(ConanFile):
             autotools.link_flags.append('-Wl,-rpath,@loader_path/../..')
 
             env_vars = {
-                'PKG_CONFIG_libffi_PREFIX': self.deps_cpp_info['ffi'].rootpath,
-                'PKG_CONFIG_zlib_PREFIX': self.deps_cpp_info['ffi'].rootpath,
+                'PKG_CONFIG_LIBFFI_PREFIX': self.deps_cpp_info['ffi'].rootpath,
+                'PKG_CONFIG_ZLIB_PREFIX': self.deps_cpp_info['zlib'].rootpath,
                 'PKG_CONFIG_PATH': (';' if 'Windows' == platform.system else ':').join([
                     os.path.join(self.deps_cpp_info['ffi'].rootpath, 'lib', 'pkgconfig'),
                     self.deps_cpp_info['zlib'].rootpath,
-                 ])
+                 ]),
             }
+
+            # This seems redundant, but happens to be required despite the
+            # pkg-config above
+            with tools.environment_append(env_vars):
+                output = StringIO()
+                self.run('pkg-config --libs-only-L libffi', output)
+
+                # Assuming only one libpath
+                libpath = str(output.getvalue()).strip().replace('-L', '-Wl,-rpath -Wl,')
+
+                # env_vars['LDFFI_LIBS'] = str(output.getvalue()).strip()
+                env_vars['LDFLAGS'] = libpath
 
             s = 'Environment:\n'
             for k,v in env_vars.items():
@@ -68,6 +81,7 @@ class GlibConan(ConanFile):
             args.append('--disable-dependency-tracking')
             args.append('--enable-static')
             args.append('--enable-included-printf')
+            args.append('--enable-libmount=no')
             args.append(f'--prefix={self.package_folder}')
 
             self.output.info('Configure arguments: %s'%' '.join(args))
@@ -75,8 +89,6 @@ class GlibConan(ConanFile):
             with tools.environment_append(env_vars):
                 self.run('./autogen.sh %s'%' '.join(args))
 
-                self.output.info('Running configure')
-                autotools.configure(configure_dir=self.name, args=args)
                 autotools.make(args=['install'])
 
 
