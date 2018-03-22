@@ -1,5 +1,5 @@
 from io import StringIO
-import os, shutil, platform
+import os, shutil, platform, re
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
 
 class GlibConan(ConanFile):
@@ -11,7 +11,7 @@ class GlibConan(ConanFile):
     requires = (
         'ffi/3.2.1@ntc/stable',
         'zlib/1.2.11/conan@stable',
-        'helpers/[>=0.1.0]@ntc/stable',
+        'helpers/[>=0.2.0]@ntc/stable',
     )
     settings = 'os', 'compiler', 'build_type', 'arch'
     url = 'https://github.com/vuo/conan-glib'
@@ -42,8 +42,11 @@ class GlibConan(ConanFile):
         self.copy(pattern='*.dylib', dst=self.name, src='lib')
 
     def build(self):
+        from platform_helpers import adjustPath, appendPkgConfigPath
+
         with tools.chdir(self.name):
-            autotools = AutoToolsBuildEnvironment(self)
+            win_bash=(platform.system() == "Windows")
+            autotools = AutoToolsBuildEnvironment(self, win_bash=win_bash)
             autotools.flags.append('-O2')
             if 'Darwin' == platform.system():
                 autotools.flags.append('-mmacosx-version-min=10.10')
@@ -53,15 +56,14 @@ class GlibConan(ConanFile):
             env_vars = {}
             pkg_config_path = []
 
-            # libffi
-            env_vars['PKG_CONFIG_LIBFFI_PREFIX'] = tweakPath(self.deps_cpp_info['ffi'].rootpath)
-            pkg_config_path.append(os.path.join(self.deps_cpp_info['ffi'].rootpath, 'lib', 'pkgconfig'))
-
             # zlib
-            env_vars['PKG_CONFIG_ZLIB_PREFIX'] = tweakPath(self.deps_cpp_info['zlib'].rootpath)
+            env_vars['PKG_CONFIG_ZLIB_PREFIX'] = adjustPath(self.deps_cpp_info['zlib'].rootpath)
             pkg_config_path.append(self.deps_cpp_info['zlib'].rootpath)
 
-            env_vars['PKG_CONFIG_PATH'] = joinPaths( list(map(adjustPath, pkg_config_path)) )
+            appendPkgConfigPath(
+                list(map(adjustPath, pkg_config_path)),
+                env_vars
+            )
 
             # This seems redundant, but happens to be required despite the
             # pkg-config above
@@ -75,8 +77,13 @@ class GlibConan(ConanFile):
                 # env_vars['LDFFI_LIBS'] = str(output.getvalue()).strip()
                 env_vars['LDFLAGS'] = libpath
 
+            s = 'Selected variables from the environment:\n'
+            for k,v in os.environ.items():
+                if re.search('PKG_', k):
+                    s += ' - %s = %s\n'%(k, v)
+            self.output.info(s)
 
-            s = 'Environment:\n'
+            s = 'Additional environment:\n'
             for k,v in env_vars.items():
                 s += ' - %s = %s\n'%(k, v)
             self.output.info(s)
@@ -99,12 +106,19 @@ class GlibConan(ConanFile):
             self.output.info('Configure arguments: %s'%' '.join(args))
 
             with tools.environment_append(env_vars):
-                self.run('./autogen.sh %s'%' '.join(args))
+                self.run('./autogen.sh %s'%' '.join(args), win_bash=win_bash)
 
                 autotools.make(args=['install'])
 
 
     def package_info(self):
         self.cpp_info.libs = ['glib']
+
+        # Populate the pkg-config environment variables
+        import site; site.addsitedir(self.deps_cpp_info['helpers'].rootpath) # Compensate for #2644
+        from platform_helpers import adjustPath, appendPkgConfigPath
+
+        self.env_info.PKG_CONFIG_GLIB_2_0_PREFIX = adjustPath(self.package_folder)
+        appendPkgConfigPath(adjustPath(os.path.join(self.package_folder, 'lib', 'pkgconfig')), self.env_info)
 
 # vim: ts=4 sw=4 expandtab ffs=unix ft=python foldmethod=marker :
