@@ -7,18 +7,16 @@ class GlibConan(ConanFile):
 
     version = '2.55.2'
     sha = 'd06830c28b0d3e8c4f1fbb6d1e359a8c76dafa0f6f2413727846e98a9d0b41aa'
-    # version = '2.51.1'
-    # sha = '1f8e40cde43ac0bcf61defb147326d038310d75d4e50f728f6becfd2a36ac0ac'
 
     requires = (
         'ffi/3.2.1@ntc/stable',
         'zlib/1.2.11/conan@stable',
     )
-    settings = 'os', 'compiler', 'build_type', 'arch'
-    url = 'https://github.com/vuo/conan-glib'
-    license = 'https://developer.gnome.org/glib/stable/glib.html'
-    description = 'Core application building blocks for GNOME libraries and applications'
-    exports = 'config.*.cache'
+    settings       = 'os', 'compiler', 'build_type', 'arch'
+    url            = 'https://github.com/vuo/conan-glib'
+    license        = 'https://developer.gnome.org/glib/stable/glib.html'
+    description    = 'Core application building blocks for GNOME libraries and applications'
+    exports        = 'config.*.cache'
     build_requires = 'pkg-config/0.29.2@ntc/stable'
 
     def source(self):
@@ -43,14 +41,10 @@ class GlibConan(ConanFile):
             autotools.link_flags.append('-Wl,-rpath,@loader_path')
             autotools.link_flags.append('-Wl,-rpath,@loader_path/../..')
 
-            env_vars = {
-                'PKG_CONFIG_LIBFFI_PREFIX': self.deps_cpp_info['ffi'].rootpath,
-                'PKG_CONFIG_ZLIB_PREFIX': self.deps_cpp_info['zlib'].rootpath,
-                'PKG_CONFIG_PATH': (';' if 'Windows' == platform.system else ':').join([
-                    os.path.join(self.deps_cpp_info['ffi'].rootpath, 'lib', 'pkgconfig'),
-                    self.deps_cpp_info['zlib'].rootpath,
-                 ]),
-            }
+            from platform_helpers import adjustPath, appendPkgConfigPath
+            env_vars = {}
+            env_vars['PKG_CONFIG_ZLIB_PREFIX'] = self.deps_cpp_info['zlib'].rootpath
+            appendPkgConfigPath(adjustPath(self.deps_cpp_info['zlib'].rootpath)), env_vars)
 
             # This seems redundant, but happens to be required despite the
             # pkg-config above
@@ -60,8 +54,6 @@ class GlibConan(ConanFile):
 
                 # Assuming only one libpath
                 libpath = str(output.getvalue()).strip().replace('-L', '-Wl,-rpath -Wl,')
-
-                # env_vars['LDFFI_LIBS'] = str(output.getvalue()).strip()
                 env_vars['LDFLAGS'] = libpath
 
             s = 'Environment:\n'
@@ -88,11 +80,16 @@ class GlibConan(ConanFile):
 
             with tools.environment_append(env_vars):
                 self.run('./autogen.sh %s'%' '.join(args))
-
                 autotools.make(args=['install'])
 
 
     def package_info(self):
         self.cpp_info.libs = ['glib']
+
+        # Populate the pkg-config environment variables
+        with tools.pythonpath(self):
+            from platform_helpers import adjustPath, appendPkgConfigPath
+            self.env_info.PKG_CONFIG_GLIB_2_0_PREFIX = self.package_folder
+            appendPkgConfigPath(os.path.join(self.package_folder, 'lib', 'pkgconfig'), self.env_info)
 
 # vim: ts=4 sw=4 expandtab ffs=unix ft=python foldmethod=marker :
