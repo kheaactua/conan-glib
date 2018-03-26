@@ -1,5 +1,5 @@
 from io import StringIO
-import os, shutil, platform
+import os, shutil, platform, re
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
 
 class GlibConan(ConanFile):
@@ -11,6 +11,7 @@ class GlibConan(ConanFile):
     requires = (
         'ffi/3.2.1@ntc/stable',
         'zlib/1.2.11/conan@stable',
+        'helpers/[>=0.2.0]@ntc/stable',
     )
     settings       = 'os', 'compiler', 'build_type', 'arch'
     url            = 'https://github.com/vuo/conan-glib'
@@ -19,9 +20,16 @@ class GlibConan(ConanFile):
     exports        = 'config.*.cache'
     build_requires = 'pkg-config/0.29.2@ntc/stable'
 
+    @property
+    def host_is_arm(self):
+        return self.settings.get_safe('arch') and self.settings.get_safe('arch').startswith('arm')
+
+    @property
+    def target_mach(self):
+        return os.environ.get('TARGETMACH', self.settings.get_safe('arch'))
+
     def source(self):
-        # url = 'https://download.gnome.org/sources/glib/2.51/glib-%s.tar.xz'%self.source_version
-        url = f'https://github.com/GNOME/glib/archive/{self.version}.tar.gz'
+        url = 'https://github.com/GNOME/glib/archive/{version}.tar.gz'.format(version=self.version)
         filename = os.path.basename(url)
         tools.download(url, filename)
         tools.check_sha256(filename, self.sha)
@@ -33,18 +41,28 @@ class GlibConan(ConanFile):
         self.copy(pattern='*.dylib', dst=self.name, src='lib')
 
     def build(self):
+        from platform_helpers import adjustPath, appendPkgConfigPath
+
         with tools.chdir(self.name):
-            autotools = AutoToolsBuildEnvironment(self)
+            win_bash=(platform.system() == "Windows")
+            autotools = AutoToolsBuildEnvironment(self, win_bash=win_bash)
             autotools.flags.append('-O2')
             if 'Darwin' == platform.system():
                 autotools.flags.append('-mmacosx-version-min=10.10')
             autotools.link_flags.append('-Wl,-rpath,@loader_path')
             autotools.link_flags.append('-Wl,-rpath,@loader_path/../..')
 
-            from platform_helpers import adjustPath, appendPkgConfigPath
             env_vars = {}
-            env_vars['PKG_CONFIG_ZLIB_PREFIX'] = self.deps_cpp_info['zlib'].rootpath
-            appendPkgConfigPath(adjustPath(self.deps_cpp_info['zlib'].rootpath)), env_vars)
+            pkg_config_path = []
+
+            # zlib
+            env_vars['PKG_CONFIG_ZLIB_PREFIX'] = adjustPath(self.deps_cpp_info['zlib'].rootpath)
+            pkg_config_path.append(self.deps_cpp_info['zlib'].rootpath)
+
+            appendPkgConfigPath(
+                list(map(adjustPath, pkg_config_path)),
+                env_vars
+            )
 
             # This seems redundant, but happens to be required despite the
             # pkg-config above
@@ -56,15 +74,21 @@ class GlibConan(ConanFile):
                 libpath = str(output.getvalue()).strip().replace('-L', '-Wl,-rpath -Wl,')
                 env_vars['LDFLAGS'] = libpath
 
-            s = 'Environment:\n'
+            s = 'Selected variables from the environment:\n'
+            for k,v in os.environ.items():
+                if re.search('PKG_', k):
+                    s += ' - %s = %s\n'%(k, v)
+            self.output.info(s)
+
+            s = 'Additional environment:\n'
             for k,v in env_vars.items():
                 s += ' - %s = %s\n'%(k, v)
             self.output.info(s)
 
             args = []
-            arch_options_cache_file = os.path.join(self.build_folder, 'config.%s.cache'%os.environ['TARGETMACH'])
-            if 'TARGETMACH' in os.environ and os.path.exists(arch_options_cache_file):
-                args.append('--host=%s'%os.environ['TARGETMACH'])
+            arch_options_cache_file = os.path.join(self.build_folder, 'config.%s.cache'%self.target_mach)
+            if os.path.exists(arch_options_cache_file):
+                args.append('--host=%s'%self.target_mach)
                 args.append('--cache-file=' + arch_options_cache_file)
 
             args.append('--quiet')
@@ -79,7 +103,8 @@ class GlibConan(ConanFile):
             self.output.info('Configure arguments: %s'%' '.join(args))
 
             with tools.environment_append(env_vars):
-                self.run('./autogen.sh %s'%' '.join(args))
+                self.run('./autogen.sh %s'%' '.join(args), win_bash=win_bash)
+
                 autotools.make(args=['install'])
 
 
