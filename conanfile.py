@@ -1,5 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 from io import StringIO
-import os, shutil, platform, re
+import os, shutil, re
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
 
 class GlibConan(ConanFile):
@@ -45,7 +48,7 @@ class GlibConan(ConanFile):
         with tools.chdir(self.name):
             autotools = AutoToolsBuildEnvironment(self, win_bash=tools.os_info.is_windows)
             autotools.flags.append('-O2')
-            if 'Darwin' == platform.system():
+            if tools.os_info.is_macos:
                 autotools.flags.append('-mmacosx-version-min=10.10')
             autotools.link_flags.append('-Wl,-rpath,@loader_path')
             autotools.link_flags.append('-Wl,-rpath,@loader_path/../..')
@@ -65,12 +68,16 @@ class GlibConan(ConanFile):
             # This seems redundant, but happens to be required despite the
             # pkg-config above
             with tools.environment_append(env_vars):
-                output = StringIO()
-                self.run('pkg-config --libs-only-L libffi', output)
+                for p in 'libffi', 'zlib':
+                    output = StringIO()
+                    self.run('pkg-config --libs-only-L %s'%p, output)
 
-                # Assuming only one libpath
-                libpath = str(output.getvalue()).strip().replace('-L', '-Wl,-rpath -Wl,')
-                env_vars['LDFLAGS'] = libpath
+                    # Assuming only one libpath
+                    libpath = str(output.getvalue()).strip().replace('-L', '-Wl,-rpath -Wl,')
+                    if 'LDFLAGS' in env_vars:
+                        env_vars['LDFLAGS'] += ' ' + libpath
+                    else:
+                        env_vars['LDFLAGS'] = libpath
 
             s = 'Selected variables from the environment:\n'
             for k,v in os.environ.items():
@@ -109,7 +116,7 @@ class GlibConan(ConanFile):
 
         # Populate the pkg-config environment variables
         with tools.pythonpath(self):
-            from platform_helpers import adjustPath, appendPkgConfigPath
+            from platform_helpers import appendPkgConfigPath
             self.env_info.PKG_CONFIG_GLIB_2_0_PREFIX = self.package_folder
             appendPkgConfigPath(os.path.join(self.package_folder, 'lib', 'pkgconfig'), self.env_info)
 
