@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 from io import StringIO
-import os, shutil, re
+import os, shutil
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
+from conans.errors import ConanException
 
 class GlibConan(ConanFile):
     name           = 'glib'
@@ -153,7 +154,9 @@ class GlibConan(ConanFile):
                 autotools.make(args=['install'])
 
     def package_info(self):
-        self.cpp_info.libs = tools.collect_libs(self)
+        # Using collect_libs results in a warning about similar libs with
+        # different file extensions.
+        self.cpp_info.libs = ['glib']
 
         # Populate the pkg-config environment variables
         with tools.pythonpath(self):
