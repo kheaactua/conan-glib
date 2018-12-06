@@ -3,22 +3,21 @@ import os, shutil, platform, re
 from conans import ConanFile, tools, AutoToolsBuildEnvironment
 
 class GlibConan(ConanFile):
-    name = 'glib'
-
-    version = '2.55.2'
-    sha = 'd06830c28b0d3e8c4f1fbb6d1e359a8c76dafa0f6f2413727846e98a9d0b41aa'
-
-    requires = (
-        'ffi/3.2.1@ntc/stable',
-        'zlib/1.2.11/conan@stable',
-        'helpers/[>=0.2.0]@ntc/stable',
-    )
-    settings       = 'os', 'compiler', 'build_type', 'arch'
+    name           = 'glib'
+    version        = '2.55.2'
+    sha            = 'd06830c28b0d3e8c4f1fbb6d1e359a8c76dafa0f6f2413727846e98a9d0b41aa'
+    settings       = 'os', 'compiler', 'build_type', 'arch', 'arch_build'
     url            = 'https://github.com/vuo/conan-glib'
     license        = 'https://developer.gnome.org/glib/stable/glib.html'
     description    = 'Core application building blocks for GNOME libraries and applications'
     exports        = 'config.*.cache'
     build_requires = 'pkg-config/0.29.2@ntc/stable'
+
+    requires = (
+        'ffi/3.2.1@ntc/stable',
+        'zlib/1.2.11@conan/stable',
+        'helpers/[>=0.2.0]@ntc/stable',
+    )
 
     @property
     def host_is_arm(self):
@@ -34,7 +33,7 @@ class GlibConan(ConanFile):
         tools.download(url, filename)
         tools.check_sha256(filename, self.sha)
         tools.unzip(filename)
-        shutil.move(f'glib-{self.version}', self.name)
+        shutil.move('glib-%s'%self.version, self.name)
         os.unlink(filename)
 
     def imports(self):
@@ -44,8 +43,7 @@ class GlibConan(ConanFile):
         from platform_helpers import adjustPath, appendPkgConfigPath
 
         with tools.chdir(self.name):
-            win_bash=(platform.system() == "Windows")
-            autotools = AutoToolsBuildEnvironment(self, win_bash=win_bash)
+            autotools = AutoToolsBuildEnvironment(self, win_bash=tools.os_info.is_windows)
             autotools.flags.append('-O2')
             if 'Darwin' == platform.system():
                 autotools.flags.append('-mmacosx-version-min=10.10')
@@ -98,15 +96,13 @@ class GlibConan(ConanFile):
             args.append('--enable-static')
             args.append('--enable-included-printf')
             args.append('--enable-libmount=no')
-            args.append(f'--prefix={self.package_folder}')
+            args.append('--prefix=%s'%self.package_folder)
 
             self.output.info('Configure arguments: %s'%' '.join(args))
 
             with tools.environment_append(env_vars):
-                self.run('./autogen.sh %s'%' '.join(args), win_bash=win_bash)
-
+                self.run('./autogen.sh %s'%' '.join(args), win_bash=tools.os_info.is_windows)
                 autotools.make(args=['install'])
-
 
     def package_info(self):
         self.cpp_info.libs = ['glib']
